@@ -1,0 +1,31 @@
+Group 2: Circuit Design & Hardware Power Systems (ALLAN AND ABHINAV)
+
+*Role:* Hardware Electronics & PCB Engineers
+
+#### Member A: Schematics & Sensor/Actuation Integration
+
+* *Master Schematic Design:*
+* Draft the complete system circuit schematic integrating the ESP32-S3 microcontroller, TCA9548A I2C multiplexer, and 6x DRV2605L haptic motor drivers.
+* Calculate and place required pull-up resistors, decoupling capacitors, and signal lines to support dual fast-mode I2C buses.
+
+
+* *Manufacturing Output Generation:*
+* Generate production-ready Gerber files, drill files, Pick-and-Place coordinates, and the complete Bill of Materials (BOM) with cost optimization for scaling.
+* Conduct Design for Manufacturability (DFM) checks for low-cost surface-mount device (SMD) assembly.
+
+
+
+#### Member B: Power Management & Board Layout
+
+* *Power Architecture:*
+* Design the Lithium-Ion/LiPo battery power management system, including USB-C charging ICs, battery protection circuits, and low-dropout (LDO) voltage regulators.
+* Ensure stable power rails (3.3V for sensors/ESP32, dedicated lines for motor drivers) to prevent voltage sags during multi-motor vibration triggers.
+
+
+* *PCB Layout & Routing:*
+* Execute compact multi-layer PCB trace routing, ensuring noise isolation between high-frequency digital communication lines and sensitive power traces.
+* Include hardware test points across critical traces for easy debugging during the physical prototyping phase.
+
+
+
+---
