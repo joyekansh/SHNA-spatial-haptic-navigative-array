@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include "shna_config.h"
 #include "tof_mux.h"
+#include "haptic_drv.h"
 
 // Task handles for FreeRTOS
 TaskHandle_t SensorTaskHandle = NULL;
@@ -16,9 +17,16 @@ void setup() {
     delay(1000);
     Serial.println("Initializing SHNA Embedded Firmware...");
 
-    // Initialize I2C bus for ESP32-S3 (default pins or standard pins)
+    // Initialize I2C bus for ESP32-S3
     Wire.begin();
     Wire.setClock(I2C_MASTER_FREQ_HZ);
+
+    // Initialize Haptic Driver module
+    if (initHapticDriver()) {
+        Serial.println("DRV2605L Haptic Driver initialized successfully.");
+    } else {
+        Serial.println("Warning: Failed to initialize DRV2605L Haptic Driver!");
+    }
 
     // Create Sensor Task pinned to Core 0
     xTaskCreatePinnedToCore(
@@ -73,7 +81,11 @@ void sensorPollingTask(void *pvParameters) {
 // --- CORE 1: Haptic Drivers & BLE Communication ---
 void outputActuationTask(void *pvParameters) {
     while (1) {
-        // TODO: Check queue from Core 0 and trigger DRV2605L haptic drivers
-        vTaskDelay(pdMS_TO_MS(10)); 
+        // Example: Trigger a gentle click effect (Effect ID 1) every 2 seconds
+        // TODO: Replace this with real-time feedback based on sensor distances from Core 0
+        Serial.println("Core 1: Triggering haptic feedback pattern...");
+        triggerHapticEffect(1); 
+
+        vTaskDelay(pdMS_TO_MS(2000)); 
     }
 }
