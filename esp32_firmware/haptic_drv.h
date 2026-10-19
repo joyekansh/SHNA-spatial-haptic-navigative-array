@@ -35,6 +35,17 @@ bool initAllHapticDrivers() {
     return allInitialized;
 }
 
+// Map distance to specific DRV2605L built-in effect IDs
+uint8_t getHapticEffectForDistance(uint16_t distanceMm) {
+    if (distanceMm < 300) {
+        return 47; // Strong buzz / urgent alert for close obstacles (< 30cm)
+    } else if (distanceMm < 600) {
+        return 14; // Sharp medium pulse (30cm - 60cm)
+    } else {
+        return 1;  // Gentle single click for distant alerts (60cm - 1m)
+    }
+}
+
 // Function to trigger a specific haptic effect waveform on a targeted motor index
 void triggerHapticEffect(uint8_t motorIndex, uint8_t effectId) {
     if (motorIndex >= TOTAL_HAPTICS) return;

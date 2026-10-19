@@ -119,11 +119,14 @@ void outputActuationTask(void *pvParameters) {
     while (1) {
         // Wait for incoming alert messages from Core 0
         if (xQueueReceive(sensorQueue, &incomingAlert, portMAX_DELAY) == pdTRUE) {
-            Serial.printf("Core 1 triggering haptic motor %d for distance %d mm\n", 
-                          incomingAlert.sensorId, incomingAlert.distanceMm);
+            // Determine haptic effect intensity based on distance
+            uint8_t effectId = getHapticEffectForDistance(incomingAlert.distanceMm);
+
+            Serial.printf("Core 1 triggering haptic motor %d | Distance = %d mm | Effect ID = %d\n", 
+                          incomingAlert.sensorId, incomingAlert.distanceMm, effectId);
             
-            // Trigger haptic feedback on the corresponding motor driver
-            triggerHapticEffect(incomingAlert.sensorId, 1); 
+            // Trigger dynamic haptic feedback
+            triggerHapticEffect(incomingAlert.sensorId, effectId); 
         }
     }
 }
