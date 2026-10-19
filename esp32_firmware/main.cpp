@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include "shna_config.h"
 #include "tof_mux.h"
+#include "tof_sensor.h"
 #include "haptic_drv.h"
 
 // Task handles for FreeRTOS
@@ -29,6 +30,13 @@ void setup() {
         Serial.println("DRV2605L Haptic Driver initialized successfully.");
     } else {
         Serial.println("Warning: Failed to initialize DRV2605L Haptic Driver!");
+    }
+
+    // Initialize all 3x VL53L5CX ToF Sensors via MUX
+    if (initAllToFSensors()) {
+        Serial.println("All VL53L5CX ToF Sensors initialized successfully.");
+    } else {
+        Serial.println("Warning: Some ToF sensors failed to initialize!");
     }
 
     // Create a Queue to hold up to 10 sensor alert messages
@@ -68,19 +76,35 @@ void loop() {
 void sensorPollingTask(void *pvParameters) {
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = pdMS_TO_MS(SAFETY_LOOP_PERIOD_MS); // 50ms loop target
+    VL53L5CX_ResultsData measurementData;
 
     xLastWakeTime = xTaskGetTickCount();
 
     while (1) {
         for (uint8_t i = 0; i < TOTAL_SENSORS; i++) {
             if (tcaSelectChannel(i)) {
-                // Mock distance reading for now (e.g., 450 mm obstacle)
-                SensorAlert_t alert;
-                alert.sensorId = i;
-                alert.distanceMm = 450; 
+                // Check if new data is ready from the VL53L5CX sensor on this channel
+                if (myToFSensors[i].isDataReady()) {
+                    if (myToFSensors[i].getRangingData(&measurementData)) {
+                        // Find the minimum distance across the 8x8 zone grid
+                        uint16_t minDistance = 4000; 
+                        for (int z = 0; z < 64; z++) {
+                            uint16_t dist = measurementData.distance_mm[z];
+                            if (dist > 0 && dist < minDistance) {
+                                minDistance = dist;
+                            }
+                        }
 
-                // Send alert to Core 1 via FreeRTOS queue (non-blocking, 5ms timeout)
-                xQueueSend(sensorQueue, &alert, pdMS_TO_MS(5));
+                        // Send alert to Core 1 if obstacle is within 1 meter
+                        if (minDistance < 1000) {
+                            SensorAlert_t alert;
+                            alert.sensorId = i;
+                            alert.distanceMm = minDistance;
+
+                            xQueueSend(sensorQueue, &alert, pdMS_TO_MS(5));
+                        }
+                    }
+                }
             }
         }
         
