@@ -25,11 +25,11 @@ void setup() {
     Wire.begin();
     Wire.setClock(I2C_MASTER_FREQ_HZ);
 
-    // Initialize Haptic Driver module
-    if (initHapticDriver()) {
-        Serial.println("DRV2605L Haptic Driver initialized successfully.");
+    // Initialize all 6x DRV2605L Haptic Drivers via MUX
+    if (initAllHapticDrivers()) {
+        Serial.println("All DRV2605L Haptic Drivers initialized successfully.");
     } else {
-        Serial.println("Warning: Failed to initialize DRV2605L Haptic Driver!");
+        Serial.println("Warning: Some Haptic Drivers failed to initialize!");
     }
 
     // Initialize all 3x VL53L5CX ToF Sensors via MUX
@@ -119,11 +119,11 @@ void outputActuationTask(void *pvParameters) {
     while (1) {
         // Wait for incoming alert messages from Core 0
         if (xQueueReceive(sensorQueue, &incomingAlert, portMAX_DELAY) == pdTRUE) {
-            Serial.printf("Core 1 received alert from Sensor %d: Distance = %d mm\n", 
+            Serial.printf("Core 1 triggering haptic motor %d for distance %d mm\n", 
                           incomingAlert.sensorId, incomingAlert.distanceMm);
             
-            // Trigger haptic feedback based on the sensor event
-            triggerHapticEffect(1); 
+            // Trigger haptic feedback on the corresponding motor driver
+            triggerHapticEffect(incomingAlert.sensorId, 1); 
         }
     }
 }
