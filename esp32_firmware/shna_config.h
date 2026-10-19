@@ -13,4 +13,9 @@
 // Timing Targets (in milliseconds)
 #define SAFETY_LOOP_PERIOD_MS 50   // Strict sub-50ms latency target
 
-#endif
+#endif 
+// Queue message structure for passing sensor alerts from Core 0 to Core 1
+struct SensorAlert_t {
+    uint8_t sensorId;
+    uint16_t distanceMm;
+};

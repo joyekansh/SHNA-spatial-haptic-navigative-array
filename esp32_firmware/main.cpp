@@ -8,6 +8,9 @@
 TaskHandle_t SensorTaskHandle = NULL;
 TaskHandle_t OutputTaskHandle = NULL;
 
+// FreeRTOS Queue Handle for Inter-Core Communication
+QueueHandle_t sensorQueue = NULL;
+
 // Forward declarations of core tasks
 void sensorPollingTask(void *pvParameters);
 void outputActuationTask(void *pvParameters);
@@ -28,15 +31,21 @@ void setup() {
         Serial.println("Warning: Failed to initialize DRV2605L Haptic Driver!");
     }
 
+    // Create a Queue to hold up to 10 sensor alert messages
+    sensorQueue = xQueueCreate(10, sizeof(SensorAlert_t));
+    if (sensorQueue == NULL) {
+        Serial.println("Error: Failed to create sensor queue!");
+    }
+
     // Create Sensor Task pinned to Core 0
     xTaskCreatePinnedToCore(
-        sensorPollingTask,   // Task function
-        "SensorPollTask",    // Name
-        4096,                // Stack size (bytes)
-        NULL,                // Parameter
-        2,                   // Priority (higher)
-        &SensorTaskHandle,   // Task handle
-        SENSOR_TASK_CORE     // Core ID (0)
+        sensorPollingTask,   
+        "SensorPollTask",    
+        4096,                
+        NULL,                
+        2,                   
+        &SensorTaskHandle,   
+        SENSOR_TASK_CORE     
     );
 
     // Create Output Task pinned to Core 1
@@ -47,7 +56,7 @@ void setup() {
         NULL, 
         1, 
         &OutputTaskHandle, 
-        OUTPUT_TASK_CORE     // Core ID (1)
+        OUTPUT_TASK_CORE     
     );
 }
 
@@ -63,29 +72,34 @@ void sensorPollingTask(void *pvParameters) {
     xLastWakeTime = xTaskGetTickCount();
 
     while (1) {
-        // Poll each of the 3 ToF sensors through the TCA9548A multiplexer
         for (uint8_t i = 0; i < TOTAL_SENSORS; i++) {
             if (tcaSelectChannel(i)) {
-                // TODO: Add VL53L5CX read data logic here for channel i
-                Serial.printf("Successfully accessed ToF Sensor on MUX Channel %d\n", i);
-            } else {
-                Serial.printf("Failed to switch to MUX Channel %d\n", i);
+                // Mock distance reading for now (e.g., 450 mm obstacle)
+                SensorAlert_t alert;
+                alert.sensorId = i;
+                alert.distanceMm = 450; 
+
+                // Send alert to Core 1 via FreeRTOS queue (non-blocking, 5ms timeout)
+                xQueueSend(sensorQueue, &alert, pdMS_TO_MS(5));
             }
         }
         
-        // Delay until the next cycle to respect the 50ms safety timing target
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
 // --- CORE 1: Haptic Drivers & BLE Communication ---
 void outputActuationTask(void *pvParameters) {
-    while (1) {
-        // Example: Trigger a gentle click effect (Effect ID 1) every 2 seconds
-        // TODO: Replace this with real-time feedback based on sensor distances from Core 0
-        Serial.println("Core 1: Triggering haptic feedback pattern...");
-        triggerHapticEffect(1); 
+    SensorAlert_t incomingAlert;
 
-        vTaskDelay(pdMS_TO_MS(2000)); 
+    while (1) {
+        // Wait for incoming alert messages from Core 0
+        if (xQueueReceive(sensorQueue, &incomingAlert, portMAX_DELAY) == pdTRUE) {
+            Serial.printf("Core 1 received alert from Sensor %d: Distance = %d mm\n", 
+                          incomingAlert.sensorId, incomingAlert.distanceMm);
+            
+            // Trigger haptic feedback based on the sensor event
+            triggerHapticEffect(1); 
+        }
     }
 }
