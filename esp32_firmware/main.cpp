@@ -4,6 +4,7 @@
 #include "tof_mux.h"
 #include "tof_sensor.h"
 #include "haptic_drv.h"
+#include "ble_telemetry.h"
 
 // Task handles for FreeRTOS
 TaskHandle_t SensorTaskHandle = NULL;
@@ -38,6 +39,9 @@ void setup() {
     } else {
         Serial.println("Warning: Some ToF sensors failed to initialize!");
     }
+
+    // Initialize BLE Telemetry Server on Core 1 domain
+    initBLETelemetry();
 
     // Create a Queue to hold up to 10 sensor alert messages
     sensorQueue = xQueueCreate(10, sizeof(SensorAlert_t));
@@ -112,7 +116,7 @@ void sensorPollingTask(void *pvParameters) {
     }
 }
 
-// --- CORE 1: Haptic Drivers & BLE Communication ---
+// --- CORE 1: Haptic Drivers & BLE Telemetry ---
 void outputActuationTask(void *pvParameters) {
     SensorAlert_t incomingAlert;
 
@@ -122,11 +126,14 @@ void outputActuationTask(void *pvParameters) {
             // Determine haptic effect intensity based on distance
             uint8_t effectId = getHapticEffectForDistance(incomingAlert.distanceMm);
 
-            Serial.printf("Core 1 triggering haptic motor %d | Distance = %d mm | Effect ID = %d\n", 
+            Serial.printf("Core 1 | Motor %d | Dist: %dmm | Effect: %d\n", 
                           incomingAlert.sensorId, incomingAlert.distanceMm, effectId);
             
             // Trigger dynamic haptic feedback
             triggerHapticEffect(incomingAlert.sensorId, effectId); 
+
+            // Broadcast telemetry data via BLE to connected clients
+            sendBLETelemetry(incomingAlert.sensorId, incomingAlert.distanceMm, effectId);
         }
     }
 }
