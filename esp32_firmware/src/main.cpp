@@ -26,60 +26,58 @@ void setup() {
     Wire.begin();
     Wire.setClock(I2C_MASTER_FREQ_HZ);
 
-    // Initialize all 6x DRV2605L Haptic Drivers via MUX
+    // Initialize all Haptic Drivers via MUX
     if (initAllHapticDrivers()) {
-        Serial.println("All DRV2605L Haptic Drivers initialized successfully.");
+        Serial.println("All Haptic Drivers initialized successfully.");
     } else {
-        Serial.println("Warning: Some Haptic Drivers failed to initialize!");
+        Serial.println("Warning: Some Haptic Drivers failed to initialize.");
     }
 
-    // Initialize all 3x VL53L5CX ToF Sensors via MUX
+    // Initialize all ToF Sensors via MUX
     if (initAllToFSensors()) {
-        Serial.println("All VL53L5CX ToF Sensors initialized successfully.");
+        Serial.println("All ToF Sensors initialized successfully.");
     } else {
-        Serial.println("Warning: Some ToF sensors failed to initialize!");
+        Serial.println("Warning: Some ToF Sensors failed to initialize.");
     }
 
-    // Initialize BLE Telemetry Server on Core 1 domain
-    initBLETelemetry();
-
-    // Create a Queue to hold up to 10 sensor alert messages
+    // Create Queue for Inter-Core communication (capacity of 10 alerts)
     sensorQueue = xQueueCreate(10, sizeof(SensorAlert_t));
     if (sensorQueue == NULL) {
         Serial.println("Error: Failed to create sensor queue!");
     }
 
-    // Create Sensor Task pinned to Core 0
+    // Create Core 0 Task: High-frequency sensor ingestion & spatial math
     xTaskCreatePinnedToCore(
-        sensorPollingTask,   
-        "SensorPollTask",    
-        4096,                
-        NULL,                
-        2,                   
-        &SensorTaskHandle,   
-        SENSOR_TASK_CORE     
+        sensorPollingTask,
+        "SensorPollingTask",
+        4096,
+        NULL,
+        2,
+        &SensorTaskHandle,
+        SENSOR_TASK_CORE
     );
 
-    // Create Output Task pinned to Core 1
+    // Create Core 1 Task: Haptic actuation & BLE telemetry
     xTaskCreatePinnedToCore(
-        outputActuationTask, 
-        "OutputActTask", 
-        4096, 
-        NULL, 
-        1, 
-        &OutputTaskHandle, 
-        OUTPUT_TASK_CORE     
+        outputActuationTask,
+        "OutputActuationTask",
+        4096,
+        NULL,
+        1,
+        &OutputTaskHandle,
+        OUTPUT_TASK_CORE
     );
 }
 
 void loop() {
+    // Arduino background loop is not used in a dual-core FreeRTOS architecture
     vTaskDelete(NULL);
 }
 
 // --- CORE 0: Sensor Ingestion & Spatial Math ---
 void sensorPollingTask(void *pvParameters) {
     TickType_t xLastWakeTime;
-    const TickType_t xFrequency = pdMS_TO_MS(SAFETY_LOOP_PERIOD_MS); // 50ms loop target
+    const TickType_t xFrequency = pdMS_TO_TICKS(SAFETY_LOOP_PERIOD_MS);
     VL53L5CX_ResultsData measurementData;
 
     xLastWakeTime = xTaskGetTickCount();
@@ -87,11 +85,11 @@ void sensorPollingTask(void *pvParameters) {
     while (1) {
         for (uint8_t i = 0; i < TOTAL_SENSORS; i++) {
             if (tcaSelectChannel(i)) {
-                // Check if new data is ready from the VL53L5CX sensor on this channel
+                // Check if new data is ready from the VL53L5CX
                 if (myToFSensors[i].isDataReady()) {
                     if (myToFSensors[i].getRangingData(&measurementData)) {
-                        // Find the minimum distance across the 8x8 zone grid
-                        uint16_t minDistance = 4000; 
+                        // Find the minimum distance across 64 zones (8x8)
+                        uint16_t minDistance = 4000;
                         for (int z = 0; z < 64; z++) {
                             uint16_t dist = measurementData.distance_mm[z];
                             if (dist > 0 && dist < minDistance) {
@@ -99,41 +97,35 @@ void sensorPollingTask(void *pvParameters) {
                             }
                         }
 
-                        // Send alert to Core 1 if obstacle is within 1 meter
+                        // Send alert to Core 1 if obstacle is close
                         if (minDistance < 1000) {
                             SensorAlert_t alert;
                             alert.sensorId = i;
                             alert.distanceMm = minDistance;
 
-                            xQueueSend(sensorQueue, &alert, pdMS_TO_MS(5));
+                            xQueueSend(sensorQueue, &alert, 0);
                         }
                     }
                 }
             }
         }
-        
+
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
-// --- CORE 1: Haptic Drivers & BLE Telemetry ---
+// --- CORE 1: Haptic Actuation & BLE Telemetry ---
 void outputActuationTask(void *pvParameters) {
     SensorAlert_t incomingAlert;
 
     while (1) {
-        // Wait for incoming alert messages from Core 0
-        if (xQueueReceive(sensorQueue, &incomingAlert, portMAX_DELAY) == pdTRUE) {
-            // Determine haptic effect intensity based on distance
-            uint8_t effectId = getHapticEffectForDistance(incomingAlert.distanceMm);
+        // Wait for alerts from Core 0 via the queue
+        if (xQueueReceive(sensorQueue, &incomingAlert, portMAX_DELAY) == pdPASS) {
+            // Trigger corresponding haptic feedback
+            triggerHapticEffect(incomingAlert.sensorId, incomingAlert.distanceMm);
 
-            Serial.printf("Core 1 | Motor %d | Dist: %dmm | Effect: %d\n", 
-                          incomingAlert.sensorId, incomingAlert.distanceMm, effectId);
-            
-            // Trigger dynamic haptic feedback
-            triggerHapticEffect(incomingAlert.sensorId, effectId); 
-
-            // Broadcast telemetry data via BLE to connected clients
-            sendBLETelemetry(incomingAlert.sensorId, incomingAlert.distanceMm, effectId);
+            // Send telemetry via BLE (passing sensorId, distance, and intensity/status flag)
+            sendBLETelemetry(incomingAlert.sensorId, incomingAlert.distanceMm, 0);
         }
     }
 }
