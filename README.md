@@ -1,11 +1,10 @@
 # Spatial Haptic Navigation Array (SHNA)
-### Vishwakarma Awards 2026-27 National Hardware Challenge Submission
 
 SHNA is an advanced, wearable spatial orientation and obstacle-avoidance system designed for visually impaired individuals. It utilizes a high-density Time-of-Flight (ToF) sensor array and directional haptic feedback to map the immediate environment and translate spatial obstacles into intuitive tactile sensations.
 
 ---
 
-## 🛠️ System Architecture & Hardware Stack
+## System Architecture & Hardware Stack
 
 * **Microcontroller**: ESP32-S3 (Dual-Core Xtensa LX7)
 * **Multiplexer**: TCA9548A I2C Multiplexer (Resolving address collisions for 3x ToF sensors and 6x haptic drivers at `0x29` and `0x5A`)
@@ -15,7 +14,7 @@ SHNA is an advanced, wearable spatial orientation and obstacle-avoidance system 
 
 ---
 
-## ⚙️ Firmware Design & FreeRTOS Multi-Core Allocation
+## Firmware Design & FreeRTOS Multi-Core Allocation
 
 To guarantee zero latency in obstacle detection and prevent haptic feedback jitter, the firmware implements a strict dual-core architecture using FreeRTOS:
 
@@ -30,7 +29,7 @@ To guarantee zero latency in obstacle detection and prevent haptic feedback jitt
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```text
 shna_firmware/
