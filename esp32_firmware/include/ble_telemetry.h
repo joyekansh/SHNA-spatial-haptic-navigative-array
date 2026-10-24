@@ -55,7 +55,7 @@ void initBLETelemetry() {
 }
 
 void sendBLETelemetry(uint8_t sensorId, uint16_t distanceMm, uint8_t effectId) {
-    if (deviceConnected) {
+    if (deviceConnected && pTelemetryCharacteristic != NULL) {
         char payload[32];
         snprintf(payload, sizeof(payload), "S:%d,D:%dmm,E:%d", sensorId, distanceMm, effectId);
         pTelemetryCharacteristic->setValue((uint8_t*)payload, strlen(payload));
@@ -63,4 +63,22 @@ void sendBLETelemetry(uint8_t sensorId, uint16_t distanceMm, uint8_t effectId) {
     }
 }
 
-#endif
+// Rich 3x2 Matrix Telemetry with latency profiling
+void sendBLEMatrixTelemetry(const HapticMatrixCommand_t &cmd, float latencyMs) {
+    if (deviceConnected && pTelemetryCharacteristic != NULL) {
+        char payload[100];
+        snprintf(payload, sizeof(payload), 
+            "LAT:%.1fms,MIN:%d,M:[%d,%d,%d,%d,%d,%d],H:[%d,%d,%d,%d,%d,%d]",
+            latencyMs,
+            cmd.globalMinDistanceMm,
+            cmd.motorEffects[0], cmd.motorEffects[1], cmd.motorEffects[2],
+            cmd.motorEffects[3], cmd.motorEffects[4], cmd.motorEffects[5],
+            (uint8_t)cmd.hazards[0], (uint8_t)cmd.hazards[1], (uint8_t)cmd.hazards[2],
+            (uint8_t)cmd.hazards[3], (uint8_t)cmd.hazards[4], (uint8_t)cmd.hazards[5]
+        );
+        pTelemetryCharacteristic->setValue((uint8_t*)payload, strlen(payload));
+        pTelemetryCharacteristic->notify();
+    }
+}
+
+#endif // BLE_TELEMETRY_H

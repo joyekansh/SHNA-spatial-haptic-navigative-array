@@ -3,8 +3,13 @@
 #include "shna_config.h"
 #include "tof_mux.h"
 #include "tof_sensor.h"
+#include "spatial_math.h"
 #include "haptic_drv.h"
 #include "ble_telemetry.h"
+
+// Global instances for 192-zone spatial cloud & geometric engine
+Point3D_t unifiedSpatialMap[TOTAL_SPATIAL_ZONES];
+SpatialGeometryEngine spatialEngine;
 
 // Task handles for FreeRTOS
 TaskHandle_t SensorTaskHandle = NULL;
@@ -20,44 +25,50 @@ void outputActuationTask(void *pvParameters);
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("Initializing SHNA Embedded Firmware...");
+    Serial.println("==================================================");
+    Serial.println("  SHNA Spatial Haptic Navigation Array Firmware  ");
+    Serial.println("  Member B: 3D Spatial Math & 3x2 Haptic Matrix  ");
+    Serial.println("==================================================");
 
-    // Initialize I2C bus for ESP32-S3
+    // Initialize I2C bus for ESP32-S3 (400kHz Fast Mode)
     Wire.begin();
     Wire.setClock(I2C_MASTER_FREQ_HZ);
 
-    // Initialize all Haptic Drivers via MUX
+    // Initialize BLE Telemetry Server
+    initBLETelemetry();
+
+    // Initialize all 6 DRV2605L Haptic Drivers across MUX channels 0-5
     if (initAllHapticDrivers()) {
-        Serial.println("All Haptic Drivers initialized successfully.");
+        Serial.println("[OK] All 6 Haptic Drivers initialized successfully.");
     } else {
-        Serial.println("Warning: Some Haptic Drivers failed to initialize.");
+        Serial.println("[WARN] Some Haptic Drivers failed to initialize.");
     }
 
-    // Initialize all ToF Sensors via MUX
+    // Initialize all 3 VL53L5CX ToF Sensors (8x8 zone mode = 192 zones)
     if (initAllToFSensors()) {
-        Serial.println("All ToF Sensors initialized successfully.");
+        Serial.println("[OK] All 3 ToF Sensors initialized successfully (192 zones).");
     } else {
-        Serial.println("Warning: Some ToF Sensors failed to initialize.");
+        Serial.println("[WARN] Some ToF Sensors failed to initialize.");
     }
 
-    // Create Queue for Inter-Core communication (capacity of 10 alerts)
-    sensorQueue = xQueueCreate(10, sizeof(SensorAlert_t));
+    // Create FreeRTOS Queue for passing 3x2 Matrix Commands between cores
+    sensorQueue = xQueueCreate(10, sizeof(HapticMatrixCommand_t));
     if (sensorQueue == NULL) {
-        Serial.println("Error: Failed to create sensor queue!");
+        Serial.println("[ERR] Failed to create sensor queue!");
     }
 
-    // Create Core 0 Task: High-frequency sensor ingestion & spatial math
+    // Create Core 0 Task: High-frequency sensor ingestion & 3D spatial math (8KB stack)
     xTaskCreatePinnedToCore(
         sensorPollingTask,
         "SensorPollingTask",
-        4096,
+        8192,
         NULL,
         2,
         &SensorTaskHandle,
         SENSOR_TASK_CORE
     );
 
-    // Create Core 1 Task: Haptic actuation & BLE telemetry
+    // Create Core 1 Task: 3x2 Haptic matrix actuation & BLE telemetry (4KB stack)
     xTaskCreatePinnedToCore(
         outputActuationTask,
         "OutputActuationTask",
@@ -74,58 +85,70 @@ void loop() {
     vTaskDelete(NULL);
 }
 
-// --- CORE 0: Sensor Ingestion & Spatial Math ---
+// --- CORE 0: Sensor Ingestion & 3D Spatial Geometry Math ---
 void sensorPollingTask(void *pvParameters) {
-    TickType_t xLastWakeTime;
+    TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(SAFETY_LOOP_PERIOD_MS);
-    VL53L5CX_ResultsData measurementData;
-
-    xLastWakeTime = xTaskGetTickCount();
+    VL53L5CX_ResultsData rawData[TOTAL_SENSORS];
 
     while (1) {
+        // High-precision timestamp marking sensor polling initiation (for latency benchmarking)
+        uint32_t tStartUs = micros();
+
+        // 1. Ingest raw 8x8 depth grids from all 3 ToF sensors via TCA9548A multiplexer
         for (uint8_t i = 0; i < TOTAL_SENSORS; i++) {
             if (tcaSelectChannel(i)) {
-                // Check if new data is ready from the VL53L5CX
                 if (myToFSensors[i].isDataReady()) {
-                    if (myToFSensors[i].getRangingData(&measurementData)) {
-                        // Find the minimum distance across 64 zones (8x8)
-                        uint16_t minDistance = 4000;
-                        for (int z = 0; z < 64; z++) {
-                            uint16_t dist = measurementData.distance_mm[z];
-                            if (dist > 0 && dist < minDistance) {
-                                minDistance = dist;
-                            }
-                        }
-
-                        // Send alert to Core 1 if obstacle is close
-                        if (minDistance < 1000) {
-                            SensorAlert_t alert;
-                            alert.sensorId = i;
-                            alert.distanceMm = minDistance;
-
-                            xQueueSend(sensorQueue, &alert, 0);
-                        }
-                    }
+                    myToFSensors[i].getRangingData(&rawData[i]);
                 }
             }
         }
 
+        // 2. Execute 3D coordinate transformations, overhang & drop-off detection, and 3x2 matrix reduction
+        HapticMatrixCommand_t matrixCmd;
+        matrixCmd.tSensorReadStartUs = tStartUs;
+        spatialEngine.processSpatialDepthMap(rawData, matrixCmd);
+
+        // 3. Non-blocking queue dispatch to Core 1
+        if (sensorQueue != NULL) {
+            xQueueSend(sensorQueue, &matrixCmd, 0);
+        }
+
+        // Strict 50ms periodic pacing
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
-// --- CORE 1: Haptic Actuation & BLE Telemetry ---
+// --- CORE 1: 3x2 Haptic Matrix Actuation, BLE & Sub-50ms Benchmarking ---
 void outputActuationTask(void *pvParameters) {
-    SensorAlert_t incomingAlert;
+    HapticMatrixCommand_t incomingCmd;
 
     while (1) {
-        // Wait for alerts from Core 0 via the queue
-        if (xQueueReceive(sensorQueue, &incomingAlert, portMAX_DELAY) == pdPASS) {
-            // Trigger corresponding haptic feedback
-            triggerHapticEffect(incomingAlert.sensorId, incomingAlert.distanceMm);
+        // Block until a new matrix command arrives from Core 0
+        if (xQueueReceive(sensorQueue, &incomingCmd, portMAX_DELAY) == pdPASS) {
+            // 1. Actuate the 3x2 Haptic Matrix across the 6 DRV2605L drivers
+            executeHapticMatrix(incomingCmd);
 
-            // Send telemetry via BLE (passing sensorId, distance, and intensity/status flag)
-            sendBLETelemetry(incomingAlert.sensorId, incomingAlert.distanceMm, 0);
+            // 2. Sub-50ms Safety Loop Latency Benchmarking (T_actuation_end - T_sensor_read_start)
+            uint32_t tEndUs = micros();
+            float latencyMs = (float)(tEndUs - incomingCmd.tSensorReadStartUs) / 1000.0f;
+
+            if (latencyMs > (float)SAFETY_LOOP_PERIOD_MS) {
+                Serial.printf("[LATENCY WARNING] Safety Loop deadline exceeded %dms: %.2f ms (Min Dist: %d mm)\n", 
+                    SAFETY_LOOP_PERIOD_MS, latencyMs, incomingCmd.globalMinDistanceMm);
+            } else {
+                // Periodically log loop performance metrics (~1Hz)
+                static uint32_t loopCount = 0;
+                if (++loopCount % 20 == 0) {
+                    Serial.printf("[PERF] Safety Loop Latency: %.2f ms | Closest: %d mm | Effects: [%d,%d,%d | %d,%d,%d]\n", 
+                        latencyMs, incomingCmd.globalMinDistanceMm,
+                        incomingCmd.motorEffects[0], incomingCmd.motorEffects[1], incomingCmd.motorEffects[2],
+                        incomingCmd.motorEffects[3], incomingCmd.motorEffects[4], incomingCmd.motorEffects[5]);
+                }
+            }
+
+            // 3. Stream live diagnostic telemetry via BLE
+            sendBLEMatrixTelemetry(incomingCmd, latencyMs);
         }
     }
 }
